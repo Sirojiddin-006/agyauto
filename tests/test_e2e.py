@@ -101,6 +101,27 @@ class E2E(unittest.TestCase):
         self.assertEqual(lines[-1], "final line", text)
         self.assertEqual(len(lines), 4, text)
 
+    def test_live_snapshots_are_whole_frames(self):
+        env = make_env()
+        p, m = spawn([sys.executable, FAKE, "slowframe"], env)
+        sess = os.path.join(env["AGYAUTO_STATE"], "sessions")
+        seen, last, end = [], None, time.time() + 9
+        while time.time() < end:
+            drain(m, p, 0.05)
+            for n in os.listdir(sess) if os.path.isdir(sess) else []:
+                if n.endswith(".screen"):
+                    with open(os.path.join(sess, n)) as f:
+                        t = f.read()
+                    if t != last:
+                        seen.append(t)
+                        last = t
+        p.terminate()
+        self.assertGreaterEqual(len(seen), 3, seen)
+        for t in seen:
+            lines = t.split("\n")
+            self.assertEqual(len(lines), 2, "partial frame published: %r" % t)
+            self.assertEqual(lines[0].split()[1], lines[1].split()[1], t)
+
     def test_record_and_replay(self):
         env = make_env()
         rec = os.path.join(env["HOME"], "rec.bin")

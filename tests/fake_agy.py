@@ -38,6 +38,20 @@ try:
                         ("Allow calling this tool?", "Yes, allow tool call", None),
                         ("Run this command?", "Yes, run command", "npm run check")]:
             out("GOT=%r\n" % prompt(q, o, c))
+    elif scenario == "overlay":
+        # second prompt is drawn over the first in place; under tmux only the changed cells reach the wrapper
+        def frame(cmd):
+            lines = ["Requesting permission for:", "   " + cmd, "", "Run this command?", "> 1. Yes, run command",
+                     "  2. Yes, and always allow in this conversation for commands that start with 'npm'",
+                     "  3. Yes, and always allow for commands that start with 'npm' (Persist to settings.json)",
+                     "  4. No, cancel  \u2191/\u2193 Navigate", "esc to cancel"]
+            return lines
+        out("\x1b[2J\x1b[H")
+        for n, cmd in enumerate(["npm run lint", "npm run build", "npm run test"]):
+            for i, l in enumerate(frame(cmd)):
+                out("\x1b[%d;1H\x1b[2K%s" % (i + 1, l))
+            out("GOT%d=%r\x1b[12;1H\x1b[2K" % (n, key(8)))
+            out("\x1b[11;1H")
     elif scenario == "deny":
         out("GOT=%r\n" % prompt("Run this command?", "Yes, run command", "sudo rm -rf /"))
     elif scenario == "unknown":
@@ -51,6 +65,15 @@ try:
             out("\x1b[1A\x1b[2K\rthinking step %d\x1b[1B\r" % i)
             time.sleep(0.05)
         out("\r\nfinal line\r\n")
+        key(30)
+    elif scenario == "slowframe":
+        # every frame is written in two halves 15 ms apart (as happens over ssh / under tmux)
+        import time
+        for i in range(60):
+            out("\x1b[H\x1b[Jframe %d begin" % i)
+            time.sleep(0.015)
+            out("\r\nframe %d end" % i)
+            time.sleep(0.11)
         key(30)
     elif scenario == "idle":
         out("hello\n")

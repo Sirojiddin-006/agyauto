@@ -65,12 +65,69 @@ def _section(screen, q_start):
     return "\n".join(l.strip() for l in body.splitlines() if l.strip())[:2000]
 
 
+_OPTION = re.compile(r"^[ \t]*(\d+)[.)][ \t]+(\S.*)$", re.M)
+
+
+def _detect_unmarked(screen, key):
+    """Newer agy builds draw the menu without a '>' marker (the cursor is colour only, which the
+    emulated screen loses): "Accept this file edit?" / " 1. Yes, accept this change" / "  2. No, ...".
+    A menu is still only answered when: a permission question sits right above it, option 1 is a
+    plain 'Yes' (not an 'always'/persist one), options are numbered 1..n, NO option carries a marker
+    (a marked option is handled by the strict path, which may refuse it), and only a short footer follows.
+    The cursor starts on option 1, so the default answer is Enter (or '1' if configured)."""
+    opts = list(_OPTION.finditer(screen))
+    first = None
+    for i in range(len(opts) - 1, -1, -1):
+        if opts[i].group(1) == "1":
+            first = i
+            break
+    if first is None:
+        return None
+    block = opts[first:]
+    if len(block) < 2 or [m.group(1) for m in block] != [str(n) for n in range(1, len(block) + 1)]:
+        return None
+    for m in block:  # any marker on an option line -> not our case
+        line = screen[m.start():m.end()]
+        if _SELECTED.match(line):
+            return None
+    # the option lines must be contiguous (only option continuation lines in between)
+    if block[-1].end() - block[0].start() > 1500:
+        return None
+    text = block[0].group(2).strip()
+    if not _YES.match(text) or _PERSIST.search(text):
+        return None
+    if sum(1 for l in screen[block[-1].end():].splitlines() if l.strip()) > 8:
+        return None
+    qs = list(_QUESTION.finditer(screen[:block[0].start()]))
+    question = qs[-1] if qs else None
+    if question is None or not _ASK.search(question.group(1)) or screen[question.end():block[0].start()].count("\n") > 3:
+        return None
+    kind = "other"
+    for rx, k in _KINDS:
+        if rx.search(question.group(1)):
+            kind = k
+            break
+    return Prompt(kind, _section(screen, question.start()), question.group(1).strip(), key if key in (b"\r", b"1") else b"\r")
+
+
 def detect(screen, key=b"\r"):
     """Return a Prompt if the screen ends in an approvable permission prompt, else None.
 
     Only ever answers option 1 (Enter or '1'); 'always allow' options are never chosen.
     """
     screen = screen[-2500:]
+    p = _detect_marked(screen, key)
+    if p is None and not _numbered_marker_after_question(screen):
+        p = _detect_unmarked(screen, key)
+    return p
+
+
+def _numbered_marker_after_question(screen):
+    """True if any numbered option line (e.g. '> 2. No') carries a selection marker."""
+    return any(m.group(1) for m in _SELECTED.finditer(screen))
+
+
+def _detect_marked(screen, key):
     sel = None
     for m in _SELECTED.finditer(screen):
         sel = m

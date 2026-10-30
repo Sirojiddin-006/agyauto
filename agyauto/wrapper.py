@@ -34,6 +34,8 @@ def _exit_code(status):
 
 
 RECORD_LIMIT = 4 * 1024 * 1024
+FRAME_IDLE = 0.04   # output gap that marks the end of a redraw; snapshots are only taken in such gaps
+FRAME_FORCE = 3.0   # ...unless output never pauses this long (the required gap shrinks while starved)
 
 
 def run(cmd, name=None, danger=None, key_override=None, record=None):
@@ -97,9 +99,9 @@ def run(cmd, name=None, danger=None, key_override=None, record=None):
     rec = open(record, "wb") if record else None
     rec_size = 0
     decoder = codecs.getincrementaldecoder("utf8")("replace")
-    match, shown = "", ""           # `match` is cleared after answering
-    last_out = last_in = last_beat = last_view = 0.0
-    view_dirty = False
+    match, shown, stable = "", "", ""   # `match` is cleared after answering
+    last_out = last_in = last_beat = last_view = dirty_since = 0.0
+    view_dirty = stable_dirty = False
     blocked_sig = stalled_sig = ""
     code = 0
     status = None
@@ -118,7 +120,7 @@ def run(cmd, name=None, danger=None, key_override=None, record=None):
         beat(time.time())
         while True:
             try:
-                r, _, _ = select.select([fd] + ([0] if interactive else []), [], [], 0.1)
+                r, _, _ = select.select([fd] + ([0] if interactive else []), [], [], 0.005 if view_dirty else 0.05)
             except InterruptedError:
                 continue
             now = time.time()
@@ -147,6 +149,8 @@ def run(cmd, name=None, danger=None, key_override=None, record=None):
                 raw = decoder.decode(d)
                 match = (match + matcher.clean(raw))[-4000:]
                 screen_vt.feed(raw)
+                if not view_dirty:
+                    dirty_since = now
                 last_out, view_dirty = now, True
             if 0 in r:
                 d = os.read(0, 4096)
@@ -156,6 +160,12 @@ def run(cmd, name=None, danger=None, key_override=None, record=None):
                     os.write(fd, d)
                     if not _FOCUS.match(d):
                         last_in = now
+
+            starved = now - dirty_since
+            if view_dirty and (now - last_out >= (FRAME_IDLE if starved < 0.5 else 0.012 if starved < 1.5 else 0.004)
+                               or starved >= FRAME_FORCE):
+                # a redraw (often split over several reads under ssh/tmux) has just finished: snapshot the screen
+                stable, view_dirty, stable_dirty = "\n".join(screen_vt.visible()), False, True
 
             if now - last_beat >= 1.0:
                 last_beat = now
@@ -173,12 +183,11 @@ def run(cmd, name=None, danger=None, key_override=None, record=None):
                         cfg["key"] = key_override
                     key = {"enter": b"\r", "1": b"1"}.get(cfg["key"], b"\r")
                     deny = [re.compile(p, re.I) for p in cfg["deny"] if p]
-                if view_dirty and now - last_view >= 1.0:
-                    last_view, view_dirty = now, False
-                    text = "\n".join(screen_vt.visible())
-                    if text != shown:
-                        shown = text
-                        registry.publish_screen(pid_self, redact(text))
+                if stable_dirty:
+                    stable_dirty = False
+                    if stable != shown:
+                        shown = stable
+                        registry.publish_screen(pid_self, redact(stable))
                 beat(now)
 
             quiet = last_out and now - last_out
