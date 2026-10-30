@@ -1,10 +1,13 @@
 import json
 import os
 import shutil
+import ssl
+import subprocess
 import sys
 import tarfile
 import tempfile
 import time
+import urllib.error
 import urllib.request
 
 from . import __version__, config, history, paths, registry
@@ -183,12 +186,30 @@ def cmd_doctor(_argv):
     return 0 if ok else 1
 
 
+def _download(url, dest):
+    """Fetch url to dest. Certificate checking is never disabled: if Python has no usable CA bundle
+    (python.org builds on macOS before 'Install Certificates.command'), use the system curl/wget instead."""
+    try:
+        with urllib.request.urlopen(url, timeout=30) as r, open(dest, "wb") as f:
+            shutil.copyfileobj(r, f)
+        return
+    except (ssl.SSLError, urllib.error.URLError) as e:
+        reason = getattr(e, "reason", e)
+        if not isinstance(reason, ssl.SSLError):
+            raise
+        tools = [c for c in (["curl", "-fsSL", "-o", dest, url], ["wget", "-qO", dest, url]) if shutil.which(c[0])]
+        for cmd in tools:
+            if subprocess.call(cmd) == 0:
+                return
+        raise RuntimeError("Python cannot verify GitHub's certificate and curl/wget are unavailable "
+                           "(macOS python.org build: run 'Install Certificates.command', or reinstall with the curl one-liner)")
+
+
 def _fetch_latest():
     url = os.environ.get("AGYAUTO_TARBALL") or "https://github.com/%s/archive/refs/heads/main.tar.gz" % REPO
     tmp = tempfile.mkdtemp(prefix="agyauto-up-")
     try:
-        with urllib.request.urlopen(url, timeout=30) as r, open(os.path.join(tmp, "src.tgz"), "wb") as f:
-            shutil.copyfileobj(r, f)
+        _download(url, os.path.join(tmp, "src.tgz"))
         with tarfile.open(os.path.join(tmp, "src.tgz")) as tf:
             for m in tf.getmembers():
                 if m.name.startswith("/") or ".." in m.name.split("/"):
