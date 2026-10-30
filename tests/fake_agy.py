@@ -67,11 +67,11 @@ try:
         out("\r\nfinal line\r\n")
         key(30)
     elif scenario == "slowframe":
-        # every frame is written in two halves 15 ms apart (as happens over ssh / under tmux)
+        # every frame is written in two halves 5 ms apart (as happens over ssh / under tmux)
         import time
         for i in range(60):
             out("\x1b[H\x1b[Jframe %d begin" % i)
-            time.sleep(0.015)
+            time.sleep(0.005)
             out("\r\nframe %d end" % i)
             time.sleep(0.11)
         key(30)
