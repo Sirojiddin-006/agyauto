@@ -1,0 +1,128 @@
+"""Pure prompt-matching logic (no I/O) so it can be unit-tested against recorded screens."""
+import re
+from collections import namedtuple
+
+# CSI sequences that move the cursor to another line become newlines, "cursor forward" becomes a
+# space, everything else (colours, modes, OSC titles) is dropped.
+_NEWLINE_CSI = re.compile(r"\x1b\[[0-9;]*[ABEFHdf]")
+_SPACE_CSI = re.compile(r"\x1b\[[0-9;]*C")
+_ANSI = re.compile(r"\x1b\[[0-9;?<>=]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>78M]")
+
+
+def clean(data):
+    """Terminal bytes (decoded) -> plain text suitable for matching and display."""
+    data = _NEWLINE_CSI.sub("\n", data)
+    data = _SPACE_CSI.sub(" ", data)
+    data = _ANSI.sub("", data)
+    data = data.replace("\r\n", "\n").replace("\r", "\n")
+    return re.sub(r"[\x00-\x08\x0b-\x1a\x1c-\x1f\x7f]", "", data)
+
+
+Prompt = namedtuple("Prompt", "kind command question key")  # key: bytes to send
+
+_SELECTED = re.compile(r"^[ \t]*[>❯›▶●◉][ \t]*(?:(\d+)[.)][ \t]*)?(\S.*)$", re.M)
+_YES = re.compile(r"^(yes|allow|accept|approve|run|proceed|ok|ha)\b", re.I)
+_PERSIST = re.compile(r"always|don'?t ask|persist|settings\.json|for this (session|conversation)|and remember", re.I)
+_QUESTION = re.compile(r"^[ \t]*(\S.*\?)[ \t]*$", re.M)
+_KINDS = [
+    (re.compile(r"run this command", re.I), "command"),
+    (re.compile(r"file edit|accept this", re.I), "edit"),
+    (re.compile(r"creation of this file|create (this|the) file", re.I), "create"),
+    (re.compile(r"calling this tool|tool call", re.I), "tool"),
+]
+_ASK = re.compile(r"permission|allow|approve|accept|do you want|would you like|run this|execute|confirm|proceed", re.I)
+
+# Things that must never be auto-approved, not even in dangermode: deleting the filesystem root / home.
+_ROOT_TARGETS = {"/", "/*", "/.", "/..", "~", "~/", "~/*", "$HOME", "${HOME}", "$HOME/", "$HOME/*", "${HOME}/*"}
+_SPLIT = re.compile(r"&&|\|\||[;|&\n(){}`]|\$\(")
+
+
+def is_root_delete(text):
+    if "--no-preserve-root" in text:
+        return True
+    for seg in _SPLIT.split(text):
+        toks = seg.replace('"', " ").replace("'", " ").split()
+        for i, t in enumerate(toks):
+            if t.rsplit("/", 1)[-1] != "rm":
+                continue
+            args = toks[i + 1:]
+            recursive = any((a.startswith("--") and a == "--recursive") or
+                            (a.startswith("-") and not a.startswith("--") and ("r" in a or "R" in a))
+                            for a in args if a.startswith("-"))
+            if recursive and any(a in _ROOT_TARGETS or re.fullmatch(r"/+\*?", a) for a in args if not a.startswith("-")):
+                return True
+    return False
+
+
+def _section(screen, q_start):
+    """Text of the command that is being asked about: from 'Requesting permission for:' to the question."""
+    head = screen[:q_start]
+    i = head.rfind("Requesting permission for:")
+    if i >= 0:
+        body = head[i + len("Requesting permission for:"):]
+    else:
+        return ""
+    return "\n".join(l.strip() for l in body.splitlines() if l.strip())[:2000]
+
+
+def detect(screen, key=b"\r"):
+    """Return a Prompt if the screen ends in an approvable permission prompt, else None.
+
+    Only ever answers option 1 (Enter or '1'); 'always allow' options are never chosen.
+    """
+    screen = screen[-2500:]
+    sel = None
+    for m in _SELECTED.finditer(screen):
+        sel = m
+    if sel is None:
+        return None
+    num, text = sel.group(1), sel.group(2).strip()
+    if (num not in (None, "1")) or not _YES.match(text) or _PERSIST.search(text):
+        return None
+    qs = [m for m in _QUESTION.finditer(screen[:sel.start()])]
+    question = qs[-1] if qs else None
+    if question is None or not _ASK.search(question.group(1)) or screen[question.end():sel.start()].count("\n") > 6:
+        return None
+    kind = "other"
+    for rx, k in _KINDS:
+        if rx.search(question.group(1)):
+            kind = k
+            break
+    cmd = _section(screen, question.start())
+    k = key if (key == b"\r" or num == "1") else b"\r"
+    return Prompt(kind, cmd, question.group(1).strip(), k)
+
+
+# --- generic (dangermode) and stall detection -------------------------------------------------
+_HINTS = [
+    (re.compile(r"\(y/n\)|\[y/n\]|\(yes/no\)", re.I), b"y\r"),
+    (re.compile(r"\[y/N\]|\[Y/n\]"), b"y\r"),
+    (re.compile(r"press (?:enter|return)\b|enter to (?:confirm|continue|accept|approve|proceed|run|allow)", re.I), b"\r"),
+    (re.compile(r"press any key", re.I), b"\r"),
+]
+_CTRL = re.compile(r"ctrl\+([a-z])\s+(?:to\s+)?(approve|accept|confirm|continue|proceed|submit|run|execute|allow|yes|send)\b", re.I)
+_ANY_HINT = re.compile(r"ctrl\+[a-z]\b|esc to cancel|navigate|\(y/n\)|\[y/n\]|press |enter to|continue\?|confirm", re.I)
+_NORMAL_FOOTER = re.compile(r"ctrl\+o to expand|ctrl\+g edit", re.I)
+
+
+def _footer(screen, n=4):
+    lines = [l for l in screen.splitlines() if l.strip()]
+    return "\n".join(lines[-n:])
+
+
+def generic(screen):
+    """Dangermode fallback for prompts we have no recorded shape for. Returns bytes to send or None."""
+    foot = _footer(screen)
+    m = _CTRL.search(foot)
+    if m:
+        return bytes([ord(m.group(1).lower()) - 96])
+    for rx, k in _HINTS:
+        if rx.search(foot):
+            return k
+    return None
+
+
+def looks_stalled(screen):
+    """A key-hint footer is on screen but nothing handled it (used to record unknown prompt shapes)."""
+    foot = _footer(screen)
+    return bool(_ANY_HINT.search(foot)) and not (_NORMAL_FOOTER.search(foot) and "?" not in foot)
