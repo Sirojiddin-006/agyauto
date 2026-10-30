@@ -35,6 +35,7 @@ def _exit_code(status):
 
 RECORD_LIMIT = 4 * 1024 * 1024
 FRAME_IDLE = 0.04   # output gap that marks the end of a redraw; snapshots are only taken in such gaps
+REARM_AFTER = 2.0   # seconds after an answer before the same visible prompt may be answered again
 FRAME_FORCE = 3.0   # ...unless output never pauses this long (the required gap shrinks while starved)
 
 
@@ -103,6 +104,10 @@ def run(cmd, name=None, danger=None, key_override=None, record=None):
     last_out = last_in = last_beat = last_view = dirty_since = 0.0
     view_dirty = stable_dirty = False
     blocked_sig = stalled_sig = ""
+    # The raw stream can miss part of a prompt (tmux only re-sends changed cells), so a prompt that is
+    # visible on the emulated screen is answered too. `armed` stops one prompt being answered twice:
+    # after any answer it is only set again once the screen no longer shows an approvable prompt.
+    armed, eval_hash, sent_at = True, None, 0.0
     code = 0
     status = None
 
@@ -166,6 +171,8 @@ def run(cmd, name=None, danger=None, key_override=None, record=None):
                                or starved >= FRAME_FORCE):
                 # a redraw (often split over several reads under ssh/tmux) has just finished: snapshot the screen
                 stable, view_dirty, stable_dirty = "\n".join(screen_vt.visible()), False, True
+                if not armed and matcher.detect(stable[-2500:], key) is None:
+                    armed = True
 
             if now - last_beat >= 1.0:
                 last_beat = now
@@ -191,17 +198,27 @@ def run(cmd, name=None, danger=None, key_override=None, record=None):
                 beat(now)
 
             quiet = last_out and now - last_out
-            if not match or not quiet or quiet < cfg["delay"] or state["paused"]:
+            if not quiet or quiet < cfg["delay"] or state["paused"]:
                 continue
             if now - last_in < 1.0:
                 continue  # a human is typing in this terminal: stay out of the way
 
             screen = match[-2500:]
-            p = matcher.detect(screen, key)
+            p = matcher.detect(screen, key) if match else None
+            if not armed and now - sent_at >= REARM_AFTER:
+                armed, eval_hash = True, None  # same prompt still (or again) on screen long after our answer: answer again
+            if p is None and armed:
+                vis = "\n".join(screen_vt.visible())
+                vh = hash(vis)
+                if vh != eval_hash:
+                    eval_hash = vh
+                    p = matcher.detect(vis[-2500:], key)
+                    if p is not None:
+                        screen = vis[-2500:]
             send, ptype, command, question = None, "", "", ""
             if p:
                 send, ptype, command, question = p.key, p.kind, p.command, p.question
-            elif state["danger"]:
+            elif state["danger"] and match:
                 g = matcher.generic(screen)
                 if g:
                     send, ptype, command = g, "generic", screen.strip().splitlines()[-1][:200]
@@ -217,15 +234,15 @@ def run(cmd, name=None, danger=None, key_override=None, record=None):
                         os.write(1, b"\a")
                         if cfg["notify"]:
                             notify.send("agyauto: BLOCKED", "%s: %s" % (state["name"], (command or "?")[:120]))
-                    match = ""
+                    match, armed, sent_at = "", False, now
                     continue
                 os.write(fd, send)
                 state["approved"] += 1
                 event("APPROVED", ptype, command, send.decode("latin1").replace("\r", "enter").replace("\n", "ctrl+j"), question=question)
-                match, blocked_sig, stalled_sig = "", "", ""
+                match, blocked_sig, stalled_sig, armed, sent_at = "", "", "", False, now
                 continue
 
-            if quiet >= cfg["stall_after"] and matcher.looks_stalled(screen):
+            if match and quiet >= cfg["stall_after"] and matcher.looks_stalled(screen):
                 sig = screen[-300:]
                 if sig != stalled_sig:
                     stalled_sig = sig

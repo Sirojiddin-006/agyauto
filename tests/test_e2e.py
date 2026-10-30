@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -120,6 +121,26 @@ class E2E(unittest.TestCase):
         # a heuristic (output gap) decides when a redraw is done, so tolerate one scheduler hiccup on a loaded CI box
         partial = [t for t in seen if len(t.split("\n")) != 2 or t.split("\n")[0].split()[1] != t.split("\n")[1].split()[1]]
         self.assertLessEqual(len(partial), max(1, len(seen) // 10), "partial frames published: %r" % partial)
+
+    @unittest.skipUnless(shutil.which("tmux"), "tmux not installed")
+    def test_tmux_identical_prompts_all_approved(self):
+        # tmux only re-sends changed cells, so the raw stream lacks repeated prompts: the emulated screen must be used
+        env = make_env()
+        env["FAKE_LOG"] = os.path.join(env["HOME"], "fake.log")
+        conf = os.path.join(env["HOME"], "tm.conf")
+        with open(conf, "w") as f:
+            f.write("set -g status off\n")
+        sock = os.path.join(env["HOME"], "tm.sock")
+        p, m = spawn(["tmux", "-S", sock, "-f", conf, "new-session", "%s %s same" % (sys.executable, FAKE)], env)
+        try:
+            end = time.time() + 25
+            while time.time() < end and p.poll() is None:
+                drain(m, p, 0.3)
+        finally:
+            p.terminate()
+            subprocess.call(["tmux", "-S", sock, "kill-server"], stderr=subprocess.DEVNULL)
+        with open(env["FAKE_LOG"]) as f:
+            self.assertEqual(f.read().split(), ["GOT0=b'\\r'", "GOT1=b'\\r'", "GOT2=b'\\r'"])
 
     def test_record_and_replay(self):
         env = make_env()

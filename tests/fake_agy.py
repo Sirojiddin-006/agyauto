@@ -52,6 +52,20 @@ try:
                 out("\x1b[%d;1H\x1b[2K%s" % (i + 1, l))
             out("GOT%d=%r\x1b[12;1H\x1b[2K" % (n, key(8)))
             out("\x1b[11;1H")
+    elif scenario == "same":
+        # three IDENTICAL prompts; the screen never changes between them, so under tmux the wrapper's raw
+        # stream carries nothing after the first one
+        for i in range(3):
+            if i == 0:
+                out("\x1b[2J\x1b[H")
+                for j, l in enumerate(["Requesting permission for:", "   node -e 'x'", "", "Run this command?", "> 1. Yes, run command",
+                                       "  2. Yes, and always allow in this conversation for commands that start with 'node'",
+                                       "  3. Yes, and always allow for commands that start with 'node' (Persist to settings.json)",
+                                       "  4. No, cancel  \u2191/\u2193 Navigate", "esc to cancel"]):
+                    out("\x1b[%d;1H%s" % (j + 1, l))
+            k = key(10)
+            with open(os.environ.get("FAKE_LOG", "/dev/null"), "a") as f:
+                f.write("GOT%d=%r\n" % (i, k))
     elif scenario == "deny":
         out("GOT=%r\n" % prompt("Run this command?", "Yes, run command", "sudo rm -rf /"))
     elif scenario == "unknown":
