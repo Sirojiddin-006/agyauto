@@ -200,7 +200,7 @@ def run(cmd, name=None, danger=None, key_override=None):
                     event("STALLED", "unknown", "", "", screen)
     finally:
         if old is not None:
-            termios.tcsetattr(0, termios.TCSADRAIN, old)
+            termios.tcsetattr(0, termios.TCSANOW, old)
         registry.remove(pid_self)
         try:
             db.close()
