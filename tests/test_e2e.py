@@ -83,6 +83,24 @@ class E2E(unittest.TestCase):
         p.wait(10)
         self._wait(env, lambda s: s == [])
 
+    def test_live_screen_is_rendered_not_fragments(self):
+        env = make_env()
+        p, m = spawn(["--name", "spin", sys.executable, FAKE, "spinner"], env)
+        sess = os.path.join(env["AGYAUTO_STATE"], "sessions")
+        text, end = "", time.time() + 25
+        while time.time() < end and "final line" not in text:
+            drain(m, p, 0.5)
+            for n in os.listdir(sess) if os.path.isdir(sess) else []:
+                if n.endswith(".screen"):
+                    with open(os.path.join(sess, n)) as f:
+                        text = f.read()
+        p.terminate()
+        lines = [l for l in text.splitlines() if l.strip()]
+        self.assertEqual(lines[0], "task started", text)
+        self.assertEqual(lines[1], "thinking step 29", text)
+        self.assertEqual(lines[-1], "final line", text)
+        self.assertEqual(len(lines), 4, text)
+
     def test_exit_code_passthrough(self):
         env = make_env()
         p, m = spawn([sys.executable, "-c", "import sys; sys.exit(7)"], env)

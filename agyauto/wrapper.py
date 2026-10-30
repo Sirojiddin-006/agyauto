@@ -2,6 +2,7 @@
 
 Nothing here depends on window focus or workspace: the keystroke goes into this session's pty only.
 """
+import codecs
 import fcntl
 import os
 import pty
@@ -14,7 +15,7 @@ import termios
 import time
 import tty
 
-from . import config, history, matcher, notify, registry
+from . import config, history, matcher, notify, registry, vt
 from .redact import redact
 
 _FOCUS = re.compile(rb"^(\x1b\[[IO])+$")  # terminal focus in/out reports are not user typing
@@ -72,15 +73,26 @@ def run(cmd, name=None, danger=None, key_override=None):
         def on_winch(*_):
             try:
                 fcntl.ioctl(fd, termios.TIOCSWINSZ, _winsz(0))
+                r_, c_ = struct.unpack("HHHH", _winsz(0))[:2]
+                if r_ and c_:
+                    screen_vt.resize(r_, c_)
                 os.kill(child, signal.SIGWINCH)
-            except OSError:
+            except (OSError, NameError, struct.error):
                 pass
         signal.signal(signal.SIGWINCH, on_winch)
 
     for sig in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, lambda s, _f: os.kill(child, s))
 
-    match, view = "", ""            # `match` is cleared after answering, `view` feeds the live screen
+    rows, cols = 24, 80
+    if interactive:
+        try:
+            rows, cols = struct.unpack("HHHH", _winsz(0))[:2]
+        except (OSError, struct.error):
+            pass
+    screen_vt = vt.Screen(rows or 24, cols or 80)   # what the user actually sees, for the dashboard's live view
+    decoder = codecs.getincrementaldecoder("utf8")("replace")
+    match, shown = "", ""           # `match` is cleared after answering
     last_out = last_in = last_beat = last_view = 0.0
     view_dirty = False
     blocked_sig = stalled_sig = ""
@@ -123,9 +135,9 @@ def run(cmd, name=None, danger=None, key_override=None):
                 if not d:
                     break
                 os.write(1, d)
-                txt = matcher.clean(d.decode("utf8", "replace"))
-                match = (match + txt)[-4000:]
-                view = (view + txt)[-12000:]
+                raw = decoder.decode(d)
+                match = (match + matcher.clean(raw))[-4000:]
+                screen_vt.feed(raw)
                 last_out, view_dirty = now, True
             if 0 in r:
                 d = os.read(0, 4096)
@@ -154,7 +166,10 @@ def run(cmd, name=None, danger=None, key_override=None):
                     deny = [re.compile(p, re.I) for p in cfg["deny"] if p]
                 if view_dirty and now - last_view >= 1.0:
                     last_view, view_dirty = now, False
-                    registry.publish_screen(pid_self, redact("\n".join(view.splitlines()[-60:])))
+                    text = screen_vt.text(120)
+                    if text != shown:
+                        shown = text
+                        registry.publish_screen(pid_self, redact(text))
                 beat(now)
 
             quiet = last_out and now - last_out

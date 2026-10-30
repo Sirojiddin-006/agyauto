@@ -43,6 +43,15 @@ try:
     elif scenario == "unknown":
         out("Deploy to production?\nPress ctrl+j to approve\n")
         out("GOT=%r\n" % key())
+    elif scenario == "spinner":
+        import time
+        out("task started\n\n")
+        for i in range(30):
+            out("\r\x1b[2K\x1b[36m\u280b\x1b[0m Running command (%ds)" % i)
+            out("\x1b[1A\x1b[2K\rthinking step %d\x1b[1B\r" % i)
+            time.sleep(0.05)
+        out("\r\nfinal line\r\n")
+        key(30)
     elif scenario == "idle":
         out("hello\n")
         key(30)
