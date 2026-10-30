@@ -101,6 +101,26 @@ class E2E(unittest.TestCase):
         self.assertEqual(lines[-1], "final line", text)
         self.assertEqual(len(lines), 4, text)
 
+    def test_record_and_replay(self):
+        env = make_env()
+        rec = os.path.join(env["HOME"], "rec.bin")
+        p, m = spawn(["--record", rec, sys.executable, FAKE, "spinner"], env)
+        drain(m, p, 25, until=b"final line\r\n")
+        p.terminate()
+        p.wait(10)
+        out = subprocess.run([sys.executable, "-m", "agyauto", "replay", rec], cwd=ROOT, env=env,
+                             stdout=subprocess.PIPE, universal_newlines=True).stdout
+        self.assertEqual([l for l in out.splitlines() if l.strip()][0], "task started", out)
+        self.assertIn("final line", out)
+
+    def test_session_reports_version(self):
+        env = make_env()
+        p, m = spawn([sys.executable, FAKE, "idle"], env)
+        st = self._wait(env, lambda s: len(s) == 1)
+        p.terminate()
+        with open(os.path.join(ROOT, "VERSION")) as f:
+            self.assertEqual(st[0]["version"], f.read().strip())
+
     def test_exit_code_passthrough(self):
         env = make_env()
         p, m = spawn([sys.executable, "-c", "import sys; sys.exit(7)"], env)

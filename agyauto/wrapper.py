@@ -15,7 +15,7 @@ import termios
 import time
 import tty
 
-from . import config, history, matcher, notify, registry, vt
+from . import __version__, config, history, matcher, notify, registry, vt
 from .redact import redact
 
 _FOCUS = re.compile(rb"^(\x1b\[[IO])+$")  # terminal focus in/out reports are not user typing
@@ -33,7 +33,10 @@ def _exit_code(status):
     return 1
 
 
-def run(cmd, name=None, danger=None, key_override=None):
+RECORD_LIMIT = 4 * 1024 * 1024
+
+
+def run(cmd, name=None, danger=None, key_override=None, record=None):
     cfg = config.load()
     if key_override:
         cfg["key"] = key_override
@@ -46,7 +49,7 @@ def run(cmd, name=None, danger=None, key_override=None):
 
     state = {
         "name": name or " ".join(cmd)[:60], "cmd": cmd, "started": time.time(),
-        "approved": 0, "blocked": 0, "stalled": 0, "paused": False,
+        "version": __version__, "approved": 0, "blocked": 0, "stalled": 0, "paused": False,
         "danger": cfg["danger_default"] if danger is None else danger,
         "last_event": "", "last_at": 0.0, "status": "watching", "cwd": os.getcwd(),
     }
@@ -91,6 +94,8 @@ def run(cmd, name=None, danger=None, key_override=None):
         except (OSError, struct.error):
             pass
     screen_vt = vt.Screen(rows or 24, cols or 80)   # what the user actually sees, for the dashboard's live view
+    rec = open(record, "wb") if record else None
+    rec_size = 0
     decoder = codecs.getincrementaldecoder("utf8")("replace")
     match, shown = "", ""           # `match` is cleared after answering
     last_out = last_in = last_beat = last_view = 0.0
@@ -135,6 +140,10 @@ def run(cmd, name=None, danger=None, key_override=None):
                 if not d:
                     break
                 os.write(1, d)
+                if rec is not None and rec_size < RECORD_LIMIT:
+                    rec.write(d)
+                    rec.flush()
+                    rec_size += len(d)
                 raw = decoder.decode(d)
                 match = (match + matcher.clean(raw))[-4000:]
                 screen_vt.feed(raw)
@@ -166,7 +175,7 @@ def run(cmd, name=None, danger=None, key_override=None):
                     deny = [re.compile(p, re.I) for p in cfg["deny"] if p]
                 if view_dirty and now - last_view >= 1.0:
                     last_view, view_dirty = now, False
-                    text = screen_vt.text(120)
+                    text = "\n".join(screen_vt.visible())
                     if text != shown:
                         shown = text
                         registry.publish_screen(pid_self, redact(text))
@@ -217,6 +226,8 @@ def run(cmd, name=None, danger=None, key_override=None):
         if old is not None:
             termios.tcsetattr(0, termios.TCSANOW, old)
         registry.remove(pid_self)
+        if rec is not None:
+            rec.close()
         try:
             db.close()
         except Exception:

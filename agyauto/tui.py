@@ -194,7 +194,7 @@ class App:
     def draw_sessions(self, y, h, w):
         rows_h = min(max(len(self.sessions), 1) + 4, max(6, h * 6 // 10))
         self.box(y, 0, rows_h, w, t("tab_sessions"), right="%d" % len(self.sessions))
-        cols = [(t("col_state"), 14), (t("col_pid"), 8), (t("col_name"), max(10, w - 14 - 8 - 9 - 10 - 9 - 9 - 30 - 6)),
+        cols = [(t("col_state"), 14), (t("col_pid"), 8), (t("col_name"), max(10, w - 14 - 8 - 7 - 9 - 10 - 9 - 9 - 30 - 6)), (t("col_ver"), 7),
                 (t("col_uptime"), 9), (t("col_ok"), 10), (t("col_blocked"), 9), (t("col_stalled"), 9), (t("col_last"), 0)]
         x = 2
         for name, cw in cols:
@@ -211,12 +211,13 @@ class App:
                 self.put(row, 1, " " * (w - 2), base)
             label, col = self.state_cell(s)
             x = 2
-            cells = ["● " + label, str(s["pid"]), s.get("name", ""), fmt_dur(now - s.get("started", now)),
+            cells = ["● " + label, str(s["pid"]), s.get("name", ""), s.get("version", "?"), fmt_dur(now - s.get("started", now)),
                      str(s.get("approved", 0)), str(s.get("blocked", 0)), str(s.get("stalled", 0)), s.get("last_event", "")]
             for j, (c, (_, cw)) in enumerate(zip(cells, cols)):
                 attr = base if sel else (curses.color_pair(col) if j == 0 else
-                                         curses.color_pair(C_BAD) if j == 5 and s.get("blocked") else
-                                         curses.color_pair(C_WARN) if j == 6 and s.get("stalled") else 0)
+                                         curses.color_pair(C_WARN) if j == 3 and s.get("version") != __version__ else
+                                         curses.color_pair(C_BAD) if j == 6 and s.get("blocked") else
+                                         curses.color_pair(C_WARN) if j == 7 and s.get("stalled") else 0)
                 self.put(row, x, clip(c, (cw - 1) if cw else w - x - 2), attr)
                 x += cw
         self.draw_events(y + rows_h, h - rows_h, w, t("recent"), None)

@@ -11,7 +11,7 @@ from . import __version__, config, history, paths, registry
 from .i18n import set_lang, t
 
 REPO = "Sirojiddin-006/agyauto"
-SUBCOMMANDS = ("dashboard", "status", "history", "config", "lang", "doctor", "update", "uninstall", "version", "help", "run")
+SUBCOMMANDS = ("replay", "dashboard", "status", "history", "config", "lang", "doctor", "update", "uninstall", "version", "help", "run")
 
 HELP = """agyauto %s - auto-approve agy permission prompts, with a dashboard
 
@@ -19,13 +19,14 @@ usage:
   agyauto                         open the dashboard
   agyauto agy [args]              run agy with auto-approval
   agyauto ssh user@host           run ssh; start agy inside it, prompts are approved
-  agyauto [--danger] [--name N] [--key enter|1] [--] <command...>
+  agyauto [--danger] [--name N] [--key enter|1] [--record FILE] [--] <command...>
 
 commands:
   status [--json]                 list running sessions
   history [-n N] [--kind K] [-s TEXT]   show recent approvals / blocks
   config [get|set KEY VALUE]      show or change settings (picked up live by running sessions)
   lang [en|uz]                    show or set the interface language
+  replay FILE [--rows N --cols N]  render a --record file (debugging the live view)
   doctor                          check the installation
   update                          update to the latest version
   uninstall [--purge]             remove agyauto (--purge also deletes config and history)
@@ -44,10 +45,13 @@ def _lang():
 def cmd_wrap(argv):
     from . import wrapper
     name = danger = key = None
+    record = os.environ.get("AGYAUTO_RECORD")
     while argv and argv[0].startswith("-") and argv[0] != "--":
         a = argv.pop(0)
         if a == "--danger":
             danger = True
+        elif a == "--record" and argv:
+            record = argv.pop(0)
         elif a == "--name" and argv:
             name = argv.pop(0)
         elif a == "--key" and argv:
@@ -63,7 +67,28 @@ def cmd_wrap(argv):
         argv.pop(0)
     if not argv:
         sys.exit("agyauto: command required, e.g. agyauto agy")
-    return wrapper.run(argv, name=name, danger=danger, key_override=key)
+    return wrapper.run(argv, name=name, danger=danger, key_override=key, record=record)
+
+
+def cmd_replay(argv):
+    """Render a --record file the way the live view would (debugging aid)."""
+    from . import vt
+    rows, cols, path = 40, 120, None
+    while argv:
+        a = argv.pop(0)
+        if a == "--rows" and argv:
+            rows = int(argv.pop(0))
+        elif a == "--cols" and argv:
+            cols = int(argv.pop(0))
+        else:
+            path = a
+    if not path:
+        sys.exit("usage: agyauto replay FILE [--rows N] [--cols N]")
+    scr = vt.Screen(rows, cols)
+    with open(path, "rb") as f:
+        scr.feed(f.read().decode("utf8", "replace"))
+    print("\n".join(scr.visible()))
+    return 0
 
 
 def cmd_status(argv):
@@ -258,7 +283,7 @@ def main(argv=None):
         return 0
     if head == "run":
         return cmd_wrap(argv[1:])
-    handlers = {"dashboard": cmd_dashboard, "status": cmd_status, "history": cmd_history, "config": cmd_config,
+    handlers = {"replay": cmd_replay, "dashboard": cmd_dashboard, "status": cmd_status, "history": cmd_history, "config": cmd_config,
                 "lang": cmd_lang, "doctor": cmd_doctor, "update": cmd_update, "uninstall": cmd_uninstall}
     if head in handlers:
         return handlers[head](argv[1:]) or 0

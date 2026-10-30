@@ -238,5 +238,12 @@ class Screen:
         out = list(self.scroll) + vis
         return out[-tail:] if tail else out
 
+    def visible(self):
+        """Only what is on the screen right now (no scrollback), trailing blank rows removed."""
+        vis = ["".join(r).rstrip() for r in self.grid]
+        while vis and not vis[-1]:
+            vis.pop()
+        return vis
+
     def text(self, tail=None):
         return "\n".join(self.lines(tail))

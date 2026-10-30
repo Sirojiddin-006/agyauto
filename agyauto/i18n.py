@@ -8,6 +8,7 @@ STR = {
     "tab_settings": ("Settings", "Sozlamalar"),
     "col_state": ("STATE", "HOLAT"),
     "col_pid": ("PID", "PID"),
+    "col_ver": ("VER", "VER"),
     "col_name": ("NAME", "NOMI"),
     "col_uptime": ("UPTIME", "VAQT"),
     "col_ok": ("APPROVED", "TASDIQ"),
