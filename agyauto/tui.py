@@ -336,7 +336,7 @@ class App:
         c = self.cfg
         onoff = lambda v: t("on") if v else t("off")
         return [
-            ("lang", t("set_lang"), "English" if c["lang"] == "en" else "Oʻzbekcha"),
+            ("lang", t("set_lang"), "English" if c["lang"] == "en" else "Özbekça"),
             ("key", t("set_key"), "Enter" if c["key"] == "enter" else "1"),
             ("delay", t("set_delay"), "%.1f" % c["delay"]),
             ("notify", t("set_notify"), onoff(c["notify"])),
