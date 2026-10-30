@@ -85,6 +85,7 @@ def run(cmd, name=None, danger=None, key_override=None):
     view_dirty = False
     blocked_sig = stalled_sig = ""
     code = 0
+    status = None
 
     def beat(now):
         state["status"] = ("paused" if state["paused"] else "danger" if state["danger"] else "watching")
@@ -104,6 +105,16 @@ def run(cmd, name=None, danger=None, key_override=None):
             except InterruptedError:
                 continue
             now = time.time()
+            if fd not in r and status is None:
+                # macOS never reports EOF on the pty master once the child is gone, so poll for the exit
+                try:
+                    wpid, wst = os.waitpid(child, os.WNOHANG)
+                except ChildProcessError:
+                    wpid, wst = child, 0
+                if wpid:
+                    status = wst
+            if fd not in r and status is not None:
+                break
             if fd in r:
                 try:
                     d = os.read(fd, 65536)
@@ -195,9 +206,9 @@ def run(cmd, name=None, danger=None, key_override=None):
             db.close()
         except Exception:
             pass
-    try:
-        _, st = os.waitpid(child, 0)
-        code = _exit_code(st)
-    except ChildProcessError:
-        pass
-    return code
+    if status is None:
+        try:
+            _, status = os.waitpid(child, 0)
+        except ChildProcessError:
+            status = 0
+    return _exit_code(status)

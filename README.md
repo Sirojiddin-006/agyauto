@@ -1,6 +1,6 @@
 # agyauto
 
-[English](README.md) · [O'zbekcha](README.uz.md)
+[English](README.md) · [Oʻzbekcha](README.uz.md)
 
 Stop babysitting permission prompts. `agyauto` wraps a command (`agy`, or `ssh` into a server where you run `agy`) in its own
 pseudo-terminal and answers agy's "Run this command? / Accept this file edit? / Allow creation of this file?" prompts for you,
@@ -34,7 +34,7 @@ workspaces, so you can keep working elsewhere. Run as many sessions as you like;
 | `d` | **dangermode** on/off for the selected session |
 | `r` | rename session |
 | `f` `/` `Enter` | History: kind filter, search, details |
-| `L` | English ⇄ O'zbekcha |
+| `L` | English ⇄ Oʻzbekcha |
 | `q` | quit |
 
 Changes made in the dashboard reach running sessions within about a second. No restart, the wrapped ssh is never interrupted.
