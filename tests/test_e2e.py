@@ -53,25 +53,35 @@ class E2E(unittest.TestCase):
         self.assertNotIn(b"GOT=b'\\n'", out2)
         self.assertEqual([r[0] for r in history_rows(env2)], ["STALLED"])
 
+    def _status(self, env):
+        out = subprocess.run([sys.executable, "-m", "agyauto", "status", "--json"], cwd=ROOT, env=env,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        try:
+            return json.loads(out.stdout)
+        except ValueError:
+            self.fail("status failed rc=%s out=%r err=%r" % (out.returncode, out.stdout, out.stderr))
+
+    def _wait(self, env, cond, timeout=25):
+        end, st = time.time() + timeout, []
+        while time.time() < end:
+            st = self._status(env)
+            if cond(st):
+                return st
+            time.sleep(0.5)
+        self.fail("condition not met, last status: %r" % (st,))
+
     def test_registry_and_live_control(self):
         env = make_env()
         p, m = spawn(["--name", "idle1", sys.executable, FAKE, "idle"], env)
-        time.sleep(2.5)
-        st = json.loads(subprocess.check_output([sys.executable, "-m", "agyauto", "status", "--json"], cwd=ROOT, env=env))
-        self.assertEqual(len(st), 1)
+        st = self._wait(env, lambda s: len(s) == 1)
         self.assertEqual(st[0]["name"], "idle1")
-        pid = st[0]["pid"]
-        ctl = os.path.join(env["AGYAUTO_STATE"], "sessions", "%d.ctl" % pid)
+        ctl = os.path.join(env["AGYAUTO_STATE"], "sessions", "%d.ctl" % st[0]["pid"])
         with open(ctl, "w") as f:
             json.dump({"danger": True, "name": "renamed"}, f)
-        time.sleep(2.5)
-        st = json.loads(subprocess.check_output([sys.executable, "-m", "agyauto", "status", "--json"], cwd=ROOT, env=env))
-        self.assertEqual((st[0]["status"], st[0]["name"]), ("danger", "renamed"))
+        st = self._wait(env, lambda s: s and s[0]["status"] == "danger" and s[0]["name"] == "renamed")
         p.terminate()
         p.wait(10)
-        time.sleep(0.5)
-        st = json.loads(subprocess.check_output([sys.executable, "-m", "agyauto", "status", "--json"], cwd=ROOT, env=env))
-        self.assertEqual(st, [])
+        self._wait(env, lambda s: s == [])
 
     def test_exit_code_passthrough(self):
         env = make_env()
